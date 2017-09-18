@@ -46,6 +46,25 @@ module Dockit
       converter = SectionConverter.new(opts)
       converter.convert
     end
+
+    desc "error_list INPUT_DIR", "Extract list of errors from uuCommand alternative scenarios"
+    option :tabs, :alias => "-t", :type => :boolean, :default => false,
+      :desc => "Use tabs instead of spaces? (default: use spaces)"
+    option :indent, :alias => "-n", :banner => "SIZE", :type => :numeric,
+      :desc => "Indent size, i.e. number of spaces/tabs to treat as one indent level (default: 2 spaces or 1 tab)"
+    option :output, :alias => "-o", :banner => "OUTPUT_DIR",
+      :desc => "Directory to write the converted files to (default: the same as INPUT_DIR)"
+    option :force, :alias => "-f", :type => :boolean, :default => false,
+      :desc => "Overwrite output files? (default: no)"
+    def error_list(input_dir)
+      opts = options.dup
+      opts[:indent] = opts[:tabs] ? 1 : 2 if opts[:indent].nil?
+      opts[:input_dir] = input_dir
+      opts[:output_dir] = input_dir if opts[:output_dir].nil?
+
+      extractor = ErrorListExtractor.new(opts)
+      extractor.extract
+    end
   end
 end
 
@@ -206,8 +225,88 @@ class SectionNode < Tree::TreeNode
       uu5 << "</UU5.Bricks.Ol>\n"
       uu5 << "</UU5.Bricks.Section>\n"
     else
-      uu5 = "<UU5.Bricks.Li>#{content}</UU5.Bricks.Li>\n"
+      text = content.sub(/(\S+\/E\d{3}-\S+)/, "<UU5.Bricks.Code>\\1</UU5.Bricks.Code>")
+      text = text.gsub(/({[^}]+})/, "<UU5.Bricks.Code>\\1</UU5.Bricks.Code>")
+      uu5 = "<UU5.Bricks.Li>#{text}</UU5.Bricks.Li>\n"
     end
     uu5
+  end
+end
+
+class ErrorListExtractor < Converter
+  def initialize(options)
+    super(options)
+  end
+
+  def extract
+    input_dir = File.expand_path(@options[:input_dir])
+    Dir.chdir(input_dir) do
+      Dir.glob("*.txt").each do |input_file|
+        extract_one(input_file)
+      end
+    end
+  end
+
+  protected
+
+  def extract_one(input_file)
+    data = File.new(input_file).read
+
+    uu5 = text_to_uu5(data)
+
+    base_name = File.basename(input_file, ".txt")
+    write_to_file("#{base_name}-errors", uu5)
+  end
+
+  def text_to_uu5(data)
+    uu5 = "<uu5string/>\n"
+    uu5 << "<UU5.Bricks.Section header='Seznam chyb'>\n"
+    uu5 << "<UuApp.DesignKit.UuCmdErrorList data='<uu5json/>[\n"
+    errors = find_errors(data)
+    errors.each_with_index do |error, idx|
+      error_uu5 = error.to_uu5
+      error_uu5 += "," unless (idx+1)==errors.size
+      error_uu5 += "\n"
+      uu5 << error_uu5
+    end
+    uu5 << "]'/>\n"
+    uu5 << "</UU5.Bricks.Section>\n"
+    return uu5
+  end
+
+  def find_errors(data)
+    errors = Hash.new { |hash, key| hash[key] = [] }
+    data.scan(/(\S+\/E\d{3}-\S+) (?:- )?\("([^"]+)"\)/) do |code, msg|
+      messages = errors[code]
+      messages << msg
+      errors[code] = messages
+    end
+    result = errors.collect do |code, messages|
+      CmdError.new(code, messages)
+    end
+    return result
+  end
+end
+
+class CmdError
+  attr_reader :code, :messages
+
+  def initialize(code, messages)
+    @code = code
+    @messages = messages || []
+  end
+
+  def <<(msg)
+    @messages << msg
+  end
+
+  def to_uu5
+    messages_uu5 = "<uu5string/><UU5.Bricks.Ul>"
+    messages.each do |msg|
+      text = msg.gsub(/({[^}]+})/, "<UU5.Bricks.Code>\\1</UU5.Bricks.Code>")
+      messages_uu5 << "<UU5.Bricks.Li>#{text}</UU5.Bricks.Li>"
+    end
+    messages_uu5 << "</UU5.Bricks.Ul>"
+    return %Q(  ["<uu5string/><UU5.Bricks.Code>#{code}</UU5.Bricks.Code>", "Error", "#{messages_uu5}", null])
   end
 end
