@@ -2,6 +2,27 @@ require "json"
 require "tree"
 
 module Dockit
+  class Uu5 < Thor
+    desc "ul INPUT_FILE", "Convert indent-based text file into uu5 unordered list"
+    option :tabs, :alias => "-t", :type => :boolean, :default => false,
+      :desc => "Use tabs instead of spaces? (default: use spaces)"
+    option :indent, :alias => "-n", :banner => "SIZE", :type => :numeric,
+      :desc => "Indent size, i.e. number of spaces/tabs to treat as one indent level (default: 2 spaces or 1 tab)"
+    option :output, :alias => "-o", :banner => "OUTPUT_DIR",
+      :desc => "Directory to write the converted file to (default: the same as for INPUT_FILE)"
+    option :force, :alias => "-f", :type => :boolean, :default => false,
+      :desc => "Overwrite output files? (default: no)"
+    def ul(input_file)
+      opts = options.dup
+      opts[:indent] = opts[:tabs] ? 1 : 2 if opts[:indent].nil?
+      opts[:output_dir] = File.dirname(input_file) if opts[:output_dir].nil?
+      opts[:list_type] = :ul
+
+      converter = Converter.new(opts)
+      converter.convert_one(input_file)
+    end
+  end
+
   class Cmd < Thor
     desc "desc_list INPUT_DIR", "Generate JSON files with uuCommand description for uuDocKit"
     def desc_list(input_dir)
@@ -9,7 +30,7 @@ module Dockit
       exit 1
     end
 
-    desc "flow INPUT_DIR", "Convert indent-based text file into JSON file with uuCommand flow"
+    desc "flow INPUT_DIR", "Convert indent-based text files into JSON files with uuCommand flow"
     option :tabs, :alias => "-t", :type => :boolean, :default => false,
       :desc => "Use tabs instead of spaces? (default: use spaces)"
     option :indent, :alias => "-n", :banner => "SIZE", :type => :numeric,
@@ -27,7 +48,7 @@ module Dockit
       converter.convert
     end
 
-    desc "alt_scenarios INPUT_DIR", "Convert indent-based text file into JSON file with uuCommand alternative scenarios"
+    desc "alt_scenarios INPUT_DIR", "Convert indent-based text files into JSON files with uuCommand alternative scenarios"
     option :tabs, :alias => "-t", :type => :boolean, :default => false,
       :desc => "Use tabs instead of spaces? (default: use spaces)"
     option :indent, :alias => "-n", :banner => "SIZE", :type => :numeric,
@@ -89,8 +110,6 @@ class Converter
     end
   end
 
-  protected
-
   def convert_one(input_file)
     root = read_input_data(input_file)
 
@@ -100,23 +119,41 @@ class Converter
     write_to_file(base_name, uu5)
   end
 
+  protected
+
   def text_to_uu5(data)
     uu5 = "<uu5string/>\n"
-    uu5 << "<UU5.Bricks.Section header='#{@options[:header]}'>\n"
-    uu5 << "<UU5.Bricks.Ol>\n"
+    if @options.key?(:header)
+      uu5 << "<UU5.Bricks.Section header='#{@options[:header]}'>\n"
+    end
+    list_type = @options.fetch(:list_type, :ol)
+    case list_type
+    when :ul
+      uu5 << "<UU5.Bricks.Ul>\n"
+    else
+      uu5 << "<UU5.Bricks.Ol>\n"
+    end
     data.children.each do |row|
       uu5 << row.to_uu5
     end
-    uu5 << "</UU5.Bricks.Ol>\n"
-    uu5 << "</UU5.Bricks.Section>\n"
+    case list_type
+    when :ul
+      uu5 << "</UU5.Bricks.Ul>\n"
+    else
+      uu5 << "</UU5.Bricks.Ol>\n"
+    end
+    if @options.key?(:header)
+      uu5 << "</UU5.Bricks.Section>\n"
+    end
     return uu5
   end
 
   def new_node(indent_level=nil, siblings=nil, content=nil)
+    list_type = @options.fetch(:list_type, :ol)
     if indent_level.nil?
-      return TNode.new("ROOT")
+      return list_type == :ul ? ULNode.new("ROOT") : OLNode.new("ROOT")
     else
-      return TNode.new("ROW_#{indent_level}_#{siblings}", content.strip)
+      return list_type == :ul ? ULNode.new("ROW_#{indent_level}_#{siblings}", content.strip) : OLNode.new("ROW_#{indent_level}_#{siblings}", content.strip)
     end
   end
 
@@ -176,7 +213,7 @@ class Converter
   end
 end
 
-class TNode < Tree::TreeNode
+class OLNode < Tree::TreeNode
   def to_uu5
     if has_children?
       uu5 = "<UU5.Bricks.Li>\n"
@@ -186,6 +223,24 @@ class TNode < Tree::TreeNode
         uu5 << child.to_uu5
       end
       uu5 << "</UU5.Bricks.Ol>\n"
+      uu5 << "</UU5.Bricks.Li>\n"
+    else
+      uu5 = "<UU5.Bricks.Li>#{content}</UU5.Bricks.Li>\n"
+    end
+    uu5
+  end
+end
+
+class ULNode < Tree::TreeNode
+  def to_uu5
+    if has_children?
+      uu5 = "<UU5.Bricks.Li>\n"
+      uu5 << "#{content}\n"
+      uu5 << "<UU5.Bricks.Ul>\n"
+      children.each do |child|
+        uu5 << child.to_uu5
+      end
+      uu5 << "</UU5.Bricks.Ul>\n"
       uu5 << "</UU5.Bricks.Li>\n"
     else
       uu5 = "<UU5.Bricks.Li>#{content}</UU5.Bricks.Li>\n"
